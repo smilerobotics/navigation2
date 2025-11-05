@@ -133,6 +133,18 @@ typedef struct _pf_t
   double dist_threshold;  // distance threshold in each axis over which the pf is considered to not
                           // be converged
   int converged;
+
+  // Indicates whether to use regularized particle filter (rpf)
+  int use_regularized_particle_filter;
+
+  // Indicates whether to recalculate the covariance for regularized resampling
+  int recalculate_covariance_for_rpf;
+
+  // [m] upper bound for the standard deviation of regularized resampling jitter in x and y [m]
+  double rpf_sigma_xy_cap;
+
+  // [rad] upper bound for the standard deviation of regularized resampling jitter in theta [rad]
+  double rpf_sigma_theta_cap;
 } pf_t;
 
 
@@ -150,6 +162,12 @@ void pf_init(pf_t * pf, pf_vector_t mean, pf_matrix_t cov);
 
 // Initialize the filter using some model
 void pf_init_model(pf_t * pf, pf_init_model_fn_t init_fn, void * init_data);
+
+void pf_init_rpf(
+  pf_t * pf, int use_rpf,
+  int recalculate_covariance_for_rpf,
+  double rpf_sigma_xy_cap,
+  double rpf_sigma_theta_cap);
 
 // Update the filter with some new action
 // void pf_update_action(pf_t * pf, pf_action_model_fn_t action_fn, void * action_data);

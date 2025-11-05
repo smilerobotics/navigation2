@@ -227,6 +227,23 @@ AmclNode::AmclNode(const rclcpp::NodeOptions & options)
   add_parameter(
     "first_map_only", rclcpp::ParameterValue(false),
     "Set this to true, when you want to load a new map published from the map_server");
+
+  add_parameter(
+    "use_regularized_particle_filter", rclcpp::ParameterValue(false),
+    "Set this to true to enable Regularized Particle Filter for no-motion updates");
+
+  add_parameter(
+    "recalculate_covariance_for_rpf", rclcpp::ParameterValue(true),
+    "Set this to false to disable recalculation of covariance matrix for Regularized Particle "
+    "Filter to avoid computational overhead");
+
+  add_parameter(
+    "rpf_sigma_xy_cap", rclcpp::ParameterValue(0.1),
+    "Upper bound for the standard deviation of regularized resampling jitter in x and y [m]");
+
+  add_parameter(
+    "rpf_sigma_theta_cap", rclcpp::ParameterValue(0.1),
+    "Upper bound for the standard deviation of regularized resampling jitter in theta [rad]");
 }
 
 AmclNode::~AmclNode()
@@ -492,6 +509,8 @@ AmclNode::globalLocalizationCallback(
   pf_init_model(
     pf_, (pf_init_model_fn_t)AmclNode::uniformPoseGenerator,
     reinterpret_cast<void *>(map_));
+  pf_init_rpf(pf_, use_regularized_particle_filter_, recalculate_covariance_for_rpf_,
+              rpf_sigma_xy_cap_, rpf_sigma_theta_cap_);
   RCLCPP_INFO(get_logger(), "Global initialisation done!");
   initial_pose_is_known_ = true;
   pf_init_ = false;
@@ -1090,6 +1109,10 @@ AmclNode::initParameters()
   get_parameter("always_reset_initial_pose", always_reset_initial_pose_);
   get_parameter("scan_topic", scan_topic_);
   get_parameter("map_topic", map_topic_);
+  get_parameter("use_regularized_particle_filter", use_regularized_particle_filter_);
+  get_parameter("recalculate_covariance_for_rpf", recalculate_covariance_for_rpf_);
+  get_parameter("rpf_sigma_xy_cap", rpf_sigma_xy_cap_);
+  get_parameter("rpf_sigma_theta_cap", rpf_sigma_theta_cap_);
 
   save_pose_period_ = tf2::durationFromSec(1.0 / save_pose_rate);
   transform_tolerance_ = tf2::durationFromSec(tmp_tol);
@@ -1275,6 +1298,12 @@ AmclNode::dynamicParametersCallback(
       } else if (param_name == "z_short") {
         z_short_ = parameter.as_double();
         reinit_laser = true;
+      } else if (param_name == "rpf_sigma_xy_cap") {
+        rpf_sigma_xy_cap_ = parameter.as_double();
+        reinit_pf = true;
+      } else if (param_name == "rpf_sigma_theta_cap") {
+        rpf_sigma_theta_cap_ = parameter.as_double();
+        reinit_pf = true;
       }
     } else if (param_type == ParameterType::PARAMETER_STRING) {
       if (param_name == "base_frame_id") {
@@ -1307,6 +1336,12 @@ AmclNode::dynamicParametersCallback(
         set_initial_pose_ = parameter.as_bool();
       } else if (param_name == "first_map_only") {
         first_map_only_ = parameter.as_bool();
+      } else if (param_name == "use_regularized_particle_filter") {
+        use_regularized_particle_filter_ = parameter.as_bool();
+        reinit_pf = true;
+      } else if (param_name == "recalculate_covariance_for_rpf") {
+        recalculate_covariance_for_rpf_ = parameter.as_bool();
+        reinit_pf = true;
       }
     } else if (param_type == ParameterType::PARAMETER_INTEGER) {
       if (param_name == "max_beams") {
@@ -1606,6 +1641,8 @@ AmclNode::initParticleFilter()
   pf_init_pose_cov.m[2][2] = init_cov_[2];
 
   pf_init(pf_, pf_init_pose_mean, pf_init_pose_cov);
+  pf_init_rpf(pf_, use_regularized_particle_filter_, recalculate_covariance_for_rpf_,
+              rpf_sigma_xy_cap_, rpf_sigma_theta_cap_);
 
   pf_init_ = false;
   resample_count_ = 0;
