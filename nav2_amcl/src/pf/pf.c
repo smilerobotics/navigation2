@@ -178,7 +178,6 @@ void pf_init(pf_t * pf, pf_vector_t mean, pf_matrix_t cov)
   pf_init_converged(pf);
 }
 
-
 // Initialize the filter using some model
 void pf_init_model(pf_t * pf, pf_init_model_fn_t init_fn, void * init_data)
 {
@@ -409,7 +408,8 @@ void pf_update_resample(pf_t * pf, void * random_pose_data)
       for (i = 0; i < 3; i++) {
         rpf_pdf->cd.v[i] *= h_opt;
       }
-      // Debug output
+      // Debug outputs
+      /*
       printf("Empirical covariance matrix:\n");
       for (i = 0; i < 3; i++) {
         printf("  [%.6f %.6f %.6f]\n",
@@ -418,6 +418,7 @@ void pf_update_resample(pf_t * pf, void * random_pose_data)
       printf("RPF sigmas before cap: [%.6f %.6f %.6f] (h_opt=%.6f)\n",
         rpf_pdf->cd.v[0], rpf_pdf->cd.v[1], rpf_pdf->cd.v[2], h_opt);
       fflush(stdout);
+      */
       int theta_index = get_theta_index(rpf_pdf);
       if (theta_index < 0)
       {
