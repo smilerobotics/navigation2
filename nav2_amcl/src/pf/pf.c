@@ -126,7 +126,6 @@ void pf_init_rpf(
   pf->rpf_sigma_theta_cap = rpf_sigma_theta_cap;
 }
 
-
 // Free an existing filter
 void pf_free(pf_t * pf)
 {
@@ -177,6 +176,7 @@ void pf_init(pf_t * pf, pf_vector_t mean, pf_matrix_t cov)
   // set converged to 0
   pf_init_converged(pf);
 }
+
 
 // Initialize the filter using some model
 void pf_init_model(pf_t * pf, pf_init_model_fn_t init_fn, void * init_data)
