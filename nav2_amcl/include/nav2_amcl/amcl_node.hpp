@@ -393,6 +393,10 @@ protected:
   std::string scan_topic_{"scan"};
   std::string map_topic_{"map"};
   bool freespace_downsampling_ = false;
+  bool use_regularized_particle_filter_;
+  bool recalculate_covariance_for_rpf_;
+  double rpf_sigma_xy_cap_;
+  double rpf_sigma_theta_cap_;
 };
 
 }  // namespace nav2_amcl
