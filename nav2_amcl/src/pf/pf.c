@@ -107,7 +107,23 @@ pf_t * pf_alloc(
   // set converged to 0
   pf_init_converged(pf);
 
+  pf->use_regularized_particle_filter = 0;
+  pf->recalculate_covariance_for_rpf = 0;
+  pf->rpf_sigma_xy_cap = 0.0;
+  pf->rpf_sigma_theta_cap = 0.0;
   return pf;
+}
+
+void pf_init_rpf(
+  pf_t * pf, int use_rpf,
+  int recalculate_covariance_for_rpf,
+  double rpf_sigma_xy_cap,
+  double rpf_sigma_theta_cap)
+{
+  pf->use_regularized_particle_filter = use_rpf;
+  pf->recalculate_covariance_for_rpf = recalculate_covariance_for_rpf;
+  pf->rpf_sigma_xy_cap = rpf_sigma_xy_cap;
+  pf->rpf_sigma_theta_cap = rpf_sigma_theta_cap;
 }
 
 // Free an existing filter
@@ -288,6 +304,48 @@ void pf_update_sensor(pf_t * pf, pf_sensor_model_fn_t sensor_fn, void * sensor_d
   }
 }
 
+static pf_pdf_gaussian_t * build_rpf_pdf(pf_sample_set_t * set_a)
+{
+  for (int i = 0; i < 3; i++) {
+    for (int j = 0; j < 3; j++) {
+      double value = set_a->cov.m[i][j];
+      if (isnan(value) || fabs(value) > 1e+6)
+      {
+        return NULL;
+      }
+    }
+  }
+  return pf_pdf_gaussian_alloc(pf_vector_zero(), set_a->cov);
+}
+
+// Equation (2.4) in Musso et al. (2001)
+static double h_scalar_gauss(int n_x, int N)
+{
+    if (N <= 0) return 0.0;
+    // A(K) = (4 / (n_x + 2))^(1 / (n_x + 4))
+    double A = pow(4.0 / (n_x + 2.0), 1.0 / (n_x + 4.0));
+    // h = A(K) * N^(-1 / (n_x + 4))
+    return A * pow((double)N, -1.0 / (n_x + 4.0));
+}
+
+static int get_theta_index(pf_pdf_gaussian_t *pdf)
+{
+  for (int j = 0; j < 3; ++j) {
+    double c0 = fabs(pdf->cr.m[0][j]);
+    double c1 = fabs(pdf->cr.m[1][j]);
+    double c2 = fabs(pdf->cr.m[2][j]);
+    if (c0 < 1e-6 && c1 < 1e-6 && fabs(c2 - 1.0) < 1e-6) {
+      return j;
+    }
+  }
+  return -1;
+}
+
+static double wrap_angle(double a) {
+  a = fmod(a + M_PI, 2.0 * M_PI);
+  if (a <= 0.0) a += 2.0 * M_PI;
+  return a - M_PI;
+}
 
 // Resample the distribution
 void pf_update_resample(pf_t * pf, void * random_pose_data)
@@ -328,6 +386,65 @@ void pf_update_resample(pf_t * pf, void * random_pose_data)
     w_diff = 0.0;
   }
   // printf("w_diff: %9.6f\n", w_diff);
+
+  // Implementation of Post-regularized Particle Filter described in
+  // the section 2.2.2 of "Improving Regularized Particle Filters", Musso et al. (2001)
+  pf_pdf_gaussian_t * rpf_pdf = NULL;
+  if (pf->use_regularized_particle_filter)
+  {
+    if (pf->recalculate_covariance_for_rpf)
+    {
+      // Calculate empirical covariance using pf_pdf_gaussian_t
+      pf_kdtree_clear(set_a->kdtree);
+      for (i = 0; i < set_a->sample_count; i++) {
+        pf_kdtree_insert(set_a->kdtree, set_a->samples[i].pose, set_a->samples[i].weight);
+      }
+      pf_cluster_stats(pf, set_a);
+    }
+    rpf_pdf = build_rpf_pdf(set_a);
+    if (rpf_pdf != NULL) {
+      // Multiply h_opt to the standard deviations
+      double h_opt = h_scalar_gauss(3, set_a->sample_count);
+      for (i = 0; i < 3; i++) {
+        rpf_pdf->cd.v[i] *= h_opt;
+      }
+      // Debug outputs
+      /*
+      printf("Empirical covariance matrix:\n");
+      for (i = 0; i < 3; i++) {
+        printf("  [%.6f %.6f %.6f]\n",
+          set_a->cov.m[i][0], set_a->cov.m[i][1], set_a->cov.m[i][2]);
+      }
+      printf("RPF sigmas before cap: [%.6f %.6f %.6f] (h_opt=%.6f)\n",
+        rpf_pdf->cd.v[0], rpf_pdf->cd.v[1], rpf_pdf->cd.v[2], h_opt);
+      fflush(stdout);
+      */
+      int theta_index = get_theta_index(rpf_pdf);
+      if (theta_index < 0)
+      {
+        // Failed to determine angle index, disable RPF for this iteration
+        pf_pdf_gaussian_free(rpf_pdf);
+        rpf_pdf = NULL;
+      }
+      else
+      {
+        // Cap the standard deviations to avoid too large jitters when
+        // the sample set has very large spread.
+        if (pf->rpf_sigma_xy_cap > 0.0) {
+          for (i = 0; i < 3; i++) {
+            if (i != theta_index && rpf_pdf->cd.v[i] > pf->rpf_sigma_xy_cap) {
+              rpf_pdf->cd.v[i] = pf->rpf_sigma_xy_cap;
+            }
+          }
+        }
+        if (pf->rpf_sigma_theta_cap > 0.0) {
+          if (rpf_pdf->cd.v[theta_index] > pf->rpf_sigma_theta_cap) {
+            rpf_pdf->cd.v[theta_index] = pf->rpf_sigma_theta_cap;
+          }
+        }
+      }
+    }
+  }
 
   // Can't (easily) combine low-variance sampler with KLD adaptive
   // sampling, so we'll take the more traditional route.
@@ -385,6 +502,15 @@ void pf_update_resample(pf_t * pf, void * random_pose_data)
 
       // Add sample to list
       sample_b->pose = sample_a->pose;
+
+      // Add regularization jitter
+      if (pf->use_regularized_particle_filter && rpf_pdf != NULL)
+      {
+        pf_vector_t jitter = pf_pdf_gaussian_sample(rpf_pdf);
+        sample_b->pose.v[0] += jitter.v[0];
+        sample_b->pose.v[1] += jitter.v[1];
+        sample_b->pose.v[2] = wrap_angle(sample_b->pose.v[2] + jitter.v[2]);
+      }
     }
 
     sample_b->weight = 1.0;
@@ -397,6 +523,10 @@ void pf_update_resample(pf_t * pf, void * random_pose_data)
     if (set_b->sample_count > pf_resample_limit(pf, set_b->kdtree->leaf_count)) {
       break;
     }
+  }
+
+  if (rpf_pdf != NULL) {
+    pf_pdf_gaussian_free(rpf_pdf);
   }
 
   // Reset averages, to avoid spiraling off into complete randomness.
