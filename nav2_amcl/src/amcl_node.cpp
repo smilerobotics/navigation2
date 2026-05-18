@@ -1180,6 +1180,7 @@ AmclNode::dynamicParametersCallback(
   int min_particles = min_particles_;
 
   bool reinit_pf = false;
+  bool reinit_rpf = false;
   bool reinit_odom = false;
   bool reinit_laser = false;
   bool reinit_map = false;
@@ -1300,10 +1301,10 @@ AmclNode::dynamicParametersCallback(
         reinit_laser = true;
       } else if (param_name == "rpf_sigma_xy_cap") {
         rpf_sigma_xy_cap_ = parameter.as_double();
-        reinit_pf = true;
+        reinit_rpf = true;
       } else if (param_name == "rpf_sigma_theta_cap") {
         rpf_sigma_theta_cap_ = parameter.as_double();
-        reinit_pf = true;
+        reinit_rpf = true;
       }
     } else if (param_type == ParameterType::PARAMETER_STRING) {
       if (param_name == "base_frame_id") {
@@ -1338,10 +1339,10 @@ AmclNode::dynamicParametersCallback(
         first_map_only_ = parameter.as_bool();
       } else if (param_name == "use_regularized_particle_filter") {
         use_regularized_particle_filter_ = parameter.as_bool();
-        reinit_pf = true;
+        reinit_rpf = true;
       } else if (param_name == "recalculate_covariance_for_rpf") {
         recalculate_covariance_for_rpf_ = parameter.as_bool();
-        reinit_pf = true;
+        reinit_rpf = true;
       }
     } else if (param_type == ParameterType::PARAMETER_INTEGER) {
       if (param_name == "max_beams") {
@@ -1379,6 +1380,11 @@ AmclNode::dynamicParametersCallback(
       pf_ = NULL;
     }
     initParticleFilter();
+  } else if (reinit_rpf) {
+    // pf_init_rpf is a pure setter on the existing pf_t, so we can update the
+    // regularized particle filter settings without rebuilding the particle set.
+    pf_init_rpf(pf_, use_regularized_particle_filter_, recalculate_covariance_for_rpf_,
+                rpf_sigma_xy_cap_, rpf_sigma_theta_cap_);
   }
 
   // Re-initialize the odometry
