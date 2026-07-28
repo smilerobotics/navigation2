@@ -283,6 +283,8 @@ protected:
   std::vector<nav2_amcl::Laser *> lasers_;
   std::vector<bool> lasers_update_;
   std::map<std::string, int> frame_to_laser_;
+  // Laser origin (x, y) in the base frame, cached per laser index for scan deskew.
+  std::vector<pf_vector_t> laser_poses_in_base_;
   rclcpp::Time last_laser_received_ts_;
 
   /*
@@ -309,6 +311,20 @@ protected:
     const int & laser_index,
     const sensor_msgs::msg::LaserScan::ConstSharedPtr & laser_scan,
     const pf_vector_t & pose);
+  /*
+   * @brief Fill ldata ranges with per-beam motion-compensated (range, bearing).
+   *
+   * Re-expresses each beam endpoint as seen from the laser origin at the scan
+   * stamp pose, compensating the base motion during the sweep. Reduces exactly
+   * to the rigid (arithmetic) fill when the base does not move. Returns false
+   * when deskew is disabled or the scan-end odom pose is unavailable, so the
+   * caller keeps the rigid fill.
+   */
+  bool fillDeskewedRanges(
+    const int & laser_index,
+    const sensor_msgs::msg::LaserScan::ConstSharedPtr & laser_scan,
+    const pf_vector_t & base_pose_at_stamp, double angle_min, double angle_increment,
+    double range_min, double range_max, double(*ranges)[2]);
   /*
    * @brief Publish particle cloud
    */
@@ -370,6 +386,12 @@ protected:
   double laser_min_range_;
   std::string sensor_model_type_;
   int max_beams_;
+  bool enable_scan_deskew_;
+  // Deskew coverage counters: the sweep-end odom transform is newer than the
+  // scan stamp the message filter gated on, so it can be missing; falling
+  // back to the rigid projection must be observable.
+  int deskew_success_count_{0};
+  int deskew_fallback_count_{0};
   int max_particles_;
   int min_particles_;
   std::string odom_frame_id_;

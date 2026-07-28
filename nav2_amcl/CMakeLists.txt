@@ -42,6 +42,7 @@ set(library_name ${executable_name}_core)
 
 add_library(${library_name} SHARED
   src/amcl_node.cpp
+  src/scan_deskew.cpp
 )
 
 target_include_directories(${library_name} PRIVATE src/include)
@@ -105,6 +106,10 @@ if(BUILD_TESTING)
   set(ament_cmake_copyright_FOUND TRUE)
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
+
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_scan_deskew test/test_scan_deskew.cpp)
+  target_link_libraries(test_scan_deskew ${library_name})
 endif()
 
 ament_export_include_directories(include)
