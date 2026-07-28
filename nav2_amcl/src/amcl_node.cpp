@@ -762,10 +762,10 @@ bool AmclNode::addNewScanner(
   const std::string & laser_scan_frame_id,
   geometry_msgs::msg::PoseStamped & laser_pose)
 {
-  lasers_.push_back(createLaserObject());
-  lasers_update_.push_back(true);
-  laser_index = frame_to_laser_.size();
-
+  // Resolve the laser mount pose before registering anything: a scanner is
+  // added to lasers_ / lasers_update_ / laser_poses_in_base_ /
+  // frame_to_laser_ only as a whole, so a transform failure cannot leave the
+  // containers out of lockstep (it used to leak an unused laser object).
   geometry_msgs::msg::PoseStamped ident;
   ident.header.frame_id = laser_scan_frame_id;
   ident.header.stamp = rclcpp::Time();
@@ -780,6 +780,10 @@ bool AmclNode::addNewScanner(
       base_frame_id_.c_str(), e.what());
     return false;
   }
+
+  lasers_.push_back(createLaserObject());
+  lasers_update_.push_back(true);
+  laser_index = frame_to_laser_.size();
 
   pf_vector_t laser_pose_v;
   laser_pose_v.v[0] = laser_pose.pose.position.x;
