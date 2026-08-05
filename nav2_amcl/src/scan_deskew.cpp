@@ -64,10 +64,12 @@ deskewScanRanges(
     }
     const double fraction = i / denom;
     const double yaw_i = start_yaw + fraction * delta_yaw;
+    const double cos_yaw_i = std::cos(yaw_i);
+    const double sin_yaw_i = std::sin(yaw_i);
     const double origin_x_i = start_x + fraction * delta_x +
-      std::cos(yaw_i) * laser_x_in_base - std::sin(yaw_i) * laser_y_in_base;
+      cos_yaw_i * laser_x_in_base - sin_yaw_i * laser_y_in_base;
     const double origin_y_i = start_y + fraction * delta_y +
-      std::sin(yaw_i) * laser_x_in_base + std::cos(yaw_i) * laser_y_in_base;
+      sin_yaw_i * laser_x_in_base + cos_yaw_i * laser_y_in_base;
     const double beam_dir = yaw_i + bearing_base;
     const double endpoint_x = origin_x_i + input_range * std::cos(beam_dir);
     const double endpoint_y = origin_y_i + input_range * std::sin(beam_dir);
