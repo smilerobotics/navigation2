@@ -509,8 +509,9 @@ AmclNode::globalLocalizationCallback(
   pf_init_model(
     pf_, (pf_init_model_fn_t)AmclNode::uniformPoseGenerator,
     reinterpret_cast<void *>(map_));
-  pf_init_rpf(pf_, use_regularized_particle_filter_, recalculate_covariance_for_rpf_,
-              rpf_sigma_xy_cap_, rpf_sigma_theta_cap_);
+  pf_init_rpf(
+    pf_, use_regularized_particle_filter_, recalculate_covariance_for_rpf_,
+    rpf_sigma_xy_cap_, rpf_sigma_theta_cap_);
   RCLCPP_INFO(get_logger(), "Global initialisation done!");
   initial_pose_is_known_ = true;
   pf_init_ = false;
@@ -1383,8 +1384,9 @@ AmclNode::dynamicParametersCallback(
   } else if (reinit_rpf) {
     // pf_init_rpf is a pure setter on the existing pf_t, so we can update the
     // regularized particle filter settings without rebuilding the particle set.
-    pf_init_rpf(pf_, use_regularized_particle_filter_, recalculate_covariance_for_rpf_,
-                rpf_sigma_xy_cap_, rpf_sigma_theta_cap_);
+    pf_init_rpf(
+      pf_, use_regularized_particle_filter_, recalculate_covariance_for_rpf_,
+      rpf_sigma_xy_cap_, rpf_sigma_theta_cap_);
   }
 
   // Re-initialize the odometry
@@ -1647,8 +1649,9 @@ AmclNode::initParticleFilter()
   pf_init_pose_cov.m[2][2] = init_cov_[2];
 
   pf_init(pf_, pf_init_pose_mean, pf_init_pose_cov);
-  pf_init_rpf(pf_, use_regularized_particle_filter_, recalculate_covariance_for_rpf_,
-              rpf_sigma_xy_cap_, rpf_sigma_theta_cap_);
+  pf_init_rpf(
+    pf_, use_regularized_particle_filter_, recalculate_covariance_for_rpf_,
+    rpf_sigma_xy_cap_, rpf_sigma_theta_cap_);
 
   pf_init_ = false;
   resample_count_ = 0;

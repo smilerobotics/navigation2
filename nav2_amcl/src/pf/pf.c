@@ -309,8 +309,7 @@ static pf_pdf_gaussian_t * build_rpf_pdf(pf_sample_set_t * set_a)
   for (int i = 0; i < 3; i++) {
     for (int j = 0; j < 3; j++) {
       double value = set_a->cov.m[i][j];
-      if (isnan(value) || fabs(value) > 1e+6)
-      {
+      if (isnan(value) || fabs(value) > 1e+6) {
         return NULL;
       }
     }
@@ -321,14 +320,14 @@ static pf_pdf_gaussian_t * build_rpf_pdf(pf_sample_set_t * set_a)
 // Equation (2.4) in Musso et al. (2001)
 static double h_scalar_gauss(int n_x, int N)
 {
-    if (N <= 0) return 0.0;
-    // A(K) = (4 / (n_x + 2))^(1 / (n_x + 4))
-    double A = pow(4.0 / (n_x + 2.0), 1.0 / (n_x + 4.0));
-    // h = A(K) * N^(-1 / (n_x + 4))
-    return A * pow((double)N, -1.0 / (n_x + 4.0));
+  if (N <= 0) {return 0.0;}
+  // A(K) = (4 / (n_x + 2))^(1 / (n_x + 4))
+  double A = pow(4.0 / (n_x + 2.0), 1.0 / (n_x + 4.0));
+  // h = A(K) * N^(-1 / (n_x + 4))
+  return A * pow((double)N, -1.0 / (n_x + 4.0));
 }
 
-static int get_theta_index(pf_pdf_gaussian_t *pdf)
+static int get_theta_index(pf_pdf_gaussian_t * pdf)
 {
   for (int j = 0; j < 3; ++j) {
     double c0 = fabs(pdf->cr.m[0][j]);
@@ -341,9 +340,10 @@ static int get_theta_index(pf_pdf_gaussian_t *pdf)
   return -1;
 }
 
-static double wrap_angle(double a) {
+static double wrap_angle(double a)
+{
   a = fmod(a + M_PI, 2.0 * M_PI);
-  if (a <= 0.0) a += 2.0 * M_PI;
+  if (a <= 0.0) {a += 2.0 * M_PI;}
   return a - M_PI;
 }
 
@@ -390,10 +390,8 @@ void pf_update_resample(pf_t * pf, void * random_pose_data)
   // Implementation of Post-regularized Particle Filter described in
   // the section 2.2.2 of "Improving Regularized Particle Filters", Musso et al. (2001)
   pf_pdf_gaussian_t * rpf_pdf = NULL;
-  if (pf->use_regularized_particle_filter)
-  {
-    if (pf->recalculate_covariance_for_rpf)
-    {
+  if (pf->use_regularized_particle_filter) {
+    if (pf->recalculate_covariance_for_rpf) {
       // Calculate empirical covariance using pf_pdf_gaussian_t
       pf_kdtree_clear(set_a->kdtree);
       for (i = 0; i < set_a->sample_count; i++) {
@@ -420,14 +418,11 @@ void pf_update_resample(pf_t * pf, void * random_pose_data)
       fflush(stdout);
       */
       int theta_index = get_theta_index(rpf_pdf);
-      if (theta_index < 0)
-      {
+      if (theta_index < 0) {
         // Failed to determine angle index, disable RPF for this iteration
         pf_pdf_gaussian_free(rpf_pdf);
         rpf_pdf = NULL;
-      }
-      else
-      {
+      } else {
         // Cap the standard deviations to avoid too large jitters when
         // the sample set has very large spread.
         if (pf->rpf_sigma_xy_cap > 0.0) {
@@ -504,8 +499,7 @@ void pf_update_resample(pf_t * pf, void * random_pose_data)
       sample_b->pose = sample_a->pose;
 
       // Add regularization jitter
-      if (pf->use_regularized_particle_filter && rpf_pdf != NULL)
-      {
+      if (pf->use_regularized_particle_filter && rpf_pdf != NULL) {
         pf_vector_t jitter = pf_pdf_gaussian_sample(rpf_pdf);
         sample_b->pose.v[0] += jitter.v[0];
         sample_b->pose.v[1] += jitter.v[1];
