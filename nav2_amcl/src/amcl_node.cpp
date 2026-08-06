@@ -23,6 +23,7 @@
 #include "nav2_amcl/amcl_node.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <utility>
@@ -32,6 +33,7 @@
 #include "nav2_amcl/angleutils.hpp"
 #include "nav2_util/geometry_utils.hpp"
 #include "nav2_amcl/pf/pf.hpp"
+#include "nav2_amcl/scan_deskew.hpp"
 #include "nav2_util/string_utils.hpp"
 #include "nav2_amcl/sensors/laser/laser.hpp"
 #include "tf2/convert.h"
@@ -144,6 +146,11 @@ AmclNode::AmclNode(const rclcpp::NodeOptions & options)
   add_parameter(
     "max_beams", rclcpp::ParameterValue(60),
     "How many evenly-spaced beams in each scan to be used when updating the filter");
+
+  add_parameter(
+    "enable_scan_deskew", rclcpp::ParameterValue(false),
+    "Motion-compensate (deskew) each scan against the odometry over the scan "
+    "duration before the measurement update");
 
   add_parameter(
     "max_particles", rclcpp::ParameterValue(2000),
@@ -756,10 +763,10 @@ bool AmclNode::addNewScanner(
   const std::string & laser_scan_frame_id,
   geometry_msgs::msg::PoseStamped & laser_pose)
 {
-  lasers_.push_back(createLaserObject());
-  lasers_update_.push_back(true);
-  laser_index = frame_to_laser_.size();
-
+  // Resolve the laser mount pose before registering anything: a scanner is
+  // added to lasers_ / lasers_update_ / laser_poses_in_base_ /
+  // frame_to_laser_ only as a whole, so a transform failure cannot leave the
+  // containers out of lockstep (it used to leak an unused laser object).
   geometry_msgs::msg::PoseStamped ident;
   ident.header.frame_id = laser_scan_frame_id;
   ident.header.stamp = rclcpp::Time();
@@ -775,12 +782,17 @@ bool AmclNode::addNewScanner(
     return false;
   }
 
+  lasers_.push_back(createLaserObject());
+  lasers_update_.push_back(true);
+  laser_index = frame_to_laser_.size();
+
   pf_vector_t laser_pose_v;
   laser_pose_v.v[0] = laser_pose.pose.position.x;
   laser_pose_v.v[1] = laser_pose.pose.position.y;
   // laser mounting angle gets computed later -> set to 0 here!
   laser_pose_v.v[2] = 0;
   lasers_[laser_index]->SetLaserPose(laser_pose_v);
+  laser_poses_in_base_.push_back(laser_pose_v);
   frame_to_laser_[laser_scan->header.frame_id] = laser_index;
   return true;
 }
@@ -853,22 +865,85 @@ bool AmclNode::updateFilter(
 
   // The LaserData destructor will free this memory
   ldata.ranges = new double[ldata.range_count][2];
-  for (int i = 0; i < ldata.range_count; i++) {
-    // amcl doesn't (yet) have a concept of min range.  So we'll map short
-    // readings to max range.
-    if (laser_scan->ranges[i] <= range_min) {
-      ldata.ranges[i][0] = ldata.range_max;
-    } else {
-      ldata.ranges[i][0] = laser_scan->ranges[i];
+  if (!fillDeskewedRanges(
+      laser_index, laser_scan, pose, angle_min, angle_increment, range_min, ldata.range_max,
+      ldata.ranges))
+  {
+    for (int i = 0; i < ldata.range_count; i++) {
+      // amcl doesn't (yet) have a concept of min range.  So we'll map short
+      // readings to max range.
+      if (laser_scan->ranges[i] <= range_min) {
+        ldata.ranges[i][0] = ldata.range_max;
+      } else {
+        ldata.ranges[i][0] = laser_scan->ranges[i];
+      }
+      // Compute bearing
+      ldata.ranges[i][1] = angle_min +
+        (i * angle_increment);
     }
-    // Compute bearing
-    ldata.ranges[i][1] = angle_min +
-      (i * angle_increment);
   }
   lasers_[laser_index]->sensorUpdate(pf_, reinterpret_cast<nav2_amcl::LaserData *>(&ldata));
   lasers_update_[laser_index] = false;
   pf_odom_pose_ = pose;
   return true;
+}
+
+bool
+AmclNode::fillDeskewedRanges(
+  const int & laser_index,
+  const sensor_msgs::msg::LaserScan::ConstSharedPtr & laser_scan,
+  const pf_vector_t & base_pose_at_stamp, double angle_min, double angle_increment,
+  double range_min, double range_max, double(*ranges)[2])
+{
+  const int range_count = static_cast<int>(laser_scan->ranges.size());
+  if (!enable_scan_deskew_ || laser_scan->time_increment <= 0.0f || range_count < 2) {
+    return false;
+  }
+
+  // The measurement update uses the base pose at the scan stamp (base_pose_at_stamp)
+  // as the single origin for all beams. Deskewing re-expresses each beam so that
+  // this single-origin model reconstructs the true endpoint despite the base
+  // having moved during the sweep, by interpolating the base motion in odom
+  // between the first-beam stamp and the last-beam time.
+  const rclcpp::Time scan_stamp(laser_scan->header.stamp);
+  const rclcpp::Time scan_end_stamp =
+    scan_stamp + rclcpp::Duration::from_seconds(
+    (range_count - 1) * static_cast<double>(laser_scan->time_increment));
+  // The scan message filter only gates on the scan stamp; the sweep-end
+  // transform is ~one sweep newer and may not have arrived yet (the fused
+  // odometry defers its TF while waiting for gyro coverage, which peaks
+  // exactly during rotation). Wait for it up to the transform tolerance
+  // instead of silently degrading to the rigid projection.
+  tf_buffer_->canTransform(
+    odom_frame_id_, nav2_util::strip_leading_slash(base_frame_id_),
+    tf2_ros::fromRclcpp(scan_end_stamp), transform_tolerance_);
+
+  geometry_msgs::msg::PoseStamped end_odom_pose;
+  double end_x = 0.0;
+  double end_y = 0.0;
+  double end_yaw = 0.0;
+  if (!getOdomPose(end_odom_pose, end_x, end_y, end_yaw, scan_end_stamp, base_frame_id_)) {
+    ++deskew_fallback_count_;
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "Scan deskew fell back to the rigid projection (%d fallbacks / %d deskewed so far): "
+      "the odom transform at the scan end time is not available",
+      deskew_fallback_count_, deskew_success_count_);
+    return false;
+  }
+  ++deskew_success_count_;
+  RCLCPP_INFO_THROTTLE(
+    get_logger(), *get_clock(), 30000,
+    "Scan deskew active (%d deskewed / %d rigid fallbacks)",
+    deskew_success_count_, deskew_fallback_count_);
+
+  const DeskewPose2D base_at_start{
+    base_pose_at_stamp.v[0], base_pose_at_stamp.v[1], base_pose_at_stamp.v[2]};
+  const DeskewPose2D base_at_end{end_x, end_y, end_yaw};
+  return deskewScanRanges(
+    laser_scan->ranges, laser_scan->time_increment, base_at_start, base_at_end,
+    laser_poses_in_base_[laser_index].v[0], laser_poses_in_base_[laser_index].v[1],
+    angle_min, angle_increment, range_min, range_max, ranges);
 }
 
 void
@@ -1087,6 +1162,7 @@ AmclNode::initParameters()
   get_parameter("initial_pose.z", initial_pose_z_);
   get_parameter("initial_pose.yaw", initial_pose_yaw_);
   get_parameter("max_beams", max_beams_);
+  get_parameter("enable_scan_deskew", enable_scan_deskew_);
   get_parameter("max_particles", max_particles_);
   get_parameter("min_particles", min_particles_);
   get_parameter("odom_frame_id", odom_frame_id_);
@@ -1341,6 +1417,8 @@ AmclNode::dynamicParametersCallback(
       } else if (param_name == "use_regularized_particle_filter") {
         use_regularized_particle_filter_ = parameter.as_bool();
         reinit_rpf = true;
+      } else if (param_name == "enable_scan_deskew") {
+        enable_scan_deskew_ = parameter.as_bool();
       } else if (param_name == "recalculate_covariance_for_rpf") {
         recalculate_covariance_for_rpf_ = parameter.as_bool();
         reinit_rpf = true;
@@ -1486,6 +1564,9 @@ AmclNode::freeMapDependentMemory()
   lasers_.clear();
   lasers_update_.clear();
   frame_to_laser_.clear();
+  // Kept in lockstep with frame_to_laser_: lasers re-register from index 0
+  // after a map reload, and stale entries would be read for the new indices.
+  laser_poses_in_base_.clear();
 }
 
 // Convert an OccupancyGrid map message into the internal representation. This function
